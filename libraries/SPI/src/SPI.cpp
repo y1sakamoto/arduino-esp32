@@ -50,22 +50,10 @@ void SPIClass::begin(int8_t sck, int8_t miso, int8_t mosi, int8_t ss)
     }
 
     if(sck == -1 && miso == -1 && mosi == -1 && ss == -1) {
-#if CONFIG_IDF_TARGET_ESP32S2
-        _sck = (_spi_num == FSPI) ? SCK : -1;
-        _miso = (_spi_num == FSPI) ? MISO : -1;
-        _mosi = (_spi_num == FSPI) ? MOSI : -1;
-        _ss = (_spi_num == FSPI) ? SS : -1;
-#elif CONFIG_IDF_TARGET_ESP32C3
-        _sck = SCK;
-        _miso = MISO;
-        _mosi = MOSI;
-        _ss = SS;
-#else
         _sck = (_spi_num == VSPI) ? SCK : 14;
         _miso = (_spi_num == VSPI) ? MISO : 12;
         _mosi = (_spi_num == VSPI) ? MOSI : 13;
         _ss = (_spi_num == VSPI) ? SS : 15;
-#endif
     } else {
         _sck = sck;
         _miso = miso;
@@ -97,7 +85,7 @@ void SPIClass::setHwCs(bool use)
     if(use && !_use_hw_ss) {
         spiAttachSS(_spi, 0, _ss);
         spiSSEnable(_spi);
-    } else if(!use && _use_hw_ss) {
+    } else if(_use_hw_ss) {
         spiSSDisable(_spi);
         spiDetachSS(_spi, _ss);
     }
@@ -250,7 +238,7 @@ void SPIClass::writePixels(const void * data, uint32_t size)
  * @param out  uint8_t * output buffer. can be NULL for Write Only operation
  * @param size uint32_t
  */
-void SPIClass::transferBytes(const uint8_t * data, uint8_t * out, uint32_t size)
+void SPIClass::transferBytes(uint8_t * data, uint8_t * out, uint32_t size)
 {
     if(_inTransaction){
         return spiTransferBytesNL(_spi, data, out, size);
@@ -263,7 +251,7 @@ void SPIClass::transferBytes(const uint8_t * data, uint8_t * out, uint32_t size)
  * @param size uint8_t  max for size is 64Byte
  * @param repeat uint32_t
  */
-void SPIClass::writePattern(const uint8_t * data, uint8_t size, uint32_t repeat)
+void SPIClass::writePattern(uint8_t * data, uint8_t size, uint32_t repeat)
 {
     if(size > 64) {
         return;    //max Hardware FIFO
@@ -284,12 +272,12 @@ void SPIClass::writePattern(const uint8_t * data, uint8_t size, uint32_t repeat)
     }
 }
 
-void SPIClass::writePattern_(const uint8_t * data, uint8_t size, uint8_t repeat)
+void SPIClass::writePattern_(uint8_t * data, uint8_t size, uint8_t repeat)
 {
     uint8_t bytes = (size * repeat);
     uint8_t buffer[64];
     uint8_t * bufferPtr = &buffer[0];
-    const uint8_t * dataPtr;
+    uint8_t * dataPtr;
     uint8_t dataSize = bytes;
     for(uint8_t i = 0; i < repeat; i++) {
         dataSize = size;
@@ -304,9 +292,4 @@ void SPIClass::writePattern_(const uint8_t * data, uint8_t size, uint8_t repeat)
     writeBytes(&buffer[0], bytes);
 }
 
-#if CONFIG_IDF_TARGET_ESP32
 SPIClass SPI(VSPI);
-#else
-SPIClass SPI(FSPI);
-#endif
-

@@ -73,15 +73,11 @@ public:
 
     bool verify(WiFiClient& client, const char* host) override
     {
-        WiFiClientSecure& wcs = static_cast<WiFiClientSecure&>(client);
-        if (_cacert == nullptr) {
-            wcs.setInsecure();
-        } else {
-            wcs.setCACert(_cacert);
-            wcs.setCertificate(_clicert);
-            wcs.setPrivateKey(_clikey);
-        }
-        return true;
+         WiFiClientSecure& wcs = static_cast<WiFiClientSecure&>(client);
+         wcs.setCACert(_cacert);
+         wcs.setCertificate(_clicert);
+         wcs.setPrivateKey(_clikey);
+         return true;
     }
 
 protected:
@@ -108,12 +104,6 @@ HTTPClient::~HTTPClient()
     }
     if(_currentHeaders) {
         delete[] _currentHeaders;
-    }
-    if(_tcpDeprecated) {
-        _tcpDeprecated.reset(nullptr);
-    }
-    if(_transportTraits) {
-        _transportTraits.reset(nullptr);
     }
 }
 
@@ -275,22 +265,15 @@ bool HTTPClient::beginInternal(String url, const char* expectedProtocol)
 
     // get port
     index = host.indexOf(':');
-    String the_host;
     if(index >= 0) {
-        the_host = host.substring(0, index); // hostname
+        _host = host.substring(0, index); // hostname
         host.remove(0, (index + 1)); // remove hostname + :
         _port = host.toInt(); // get port
     } else {
-        the_host = host;
+        _host = host;
     }
-    if(_host != the_host && connected()){
-        log_d("switching host from '%s' to '%s'. disconnecting first", _host.c_str(), the_host.c_str());
-        _canReuse = false;
-        disconnect(true);
-    }
-    _host = the_host;
     _uri = url;
-    log_d("protocol: %s, host: %s port: %d url: %s", _protocol.c_str(), _host.c_str(), _port, _uri.c_str());
+    log_d("host: %s port: %d url: %s", _host.c_str(), _port, _uri.c_str());
     return true;
 }
 
@@ -382,19 +365,19 @@ void HTTPClient::disconnect(bool preserveClient)
         }
 
         if(_reuse && _canReuse) {
-            log_d("tcp keep open for reuse");
+            log_d("tcp keep open for reuse\n");
         } else {
-            log_d("tcp stop");
+            log_d("tcp stop\n");
             _client->stop();
             if(!preserveClient) {
                 _client = nullptr;
-#ifdef HTTPCLIENT_1_1_COMPATIBLE
-                if(_tcpDeprecated) {
-                    _transportTraits.reset(nullptr);
-                    _tcpDeprecated.reset(nullptr);
-                }
-#endif
             }
+#ifdef HTTPCLIENT_1_1_COMPATIBLE
+            if(_tcpDeprecated) {
+                _transportTraits.reset(nullptr);
+                _tcpDeprecated.reset(nullptr);
+            }
+#endif
         }
     } else {
         log_d("tcp is closed\n");
@@ -565,106 +548,29 @@ int HTTPClient::sendRequest(const char * type, String payload)
  */
 int HTTPClient::sendRequest(const char * type, uint8_t * payload, size_t size)
 {
-    int code;
-    bool redirect = false;
-    uint16_t redirectCount = 0;
-    do {
-        // wipe out any existing headers from previous request
-        for(size_t i = 0; i < _headerKeysCount; i++) {
-            if (_currentHeaders[i].value.length() > 0) {
-                _currentHeaders[i].value.clear();
-            }
+    // connect to server
+    if(!connect()) {
+        return returnError(HTTPC_ERROR_CONNECTION_REFUSED);
+    }
+
+    if(payload && size > 0) {
+        addHeader(F("Content-Length"), String(size));
+    }
+
+    // send Header
+    if(!sendHeader(type)) {
+        return returnError(HTTPC_ERROR_SEND_HEADER_FAILED);
+    }
+
+    // send Payload if needed
+    if(payload && size > 0) {
+        if(_client->write(&payload[0], size) != size) {
+            return returnError(HTTPC_ERROR_SEND_PAYLOAD_FAILED);
         }
+    }
 
-        log_d("request type: '%s' redirCount: %d\n", type, redirectCount);
-        
-        // connect to server
-        if(!connect()) {
-            return returnError(HTTPC_ERROR_CONNECTION_REFUSED);
-        }
-
-        if(payload && size > 0) {
-            addHeader(F("Content-Length"), String(size));
-        }
-
-        // send Header
-        if(!sendHeader(type)) {
-            return returnError(HTTPC_ERROR_SEND_HEADER_FAILED);
-        }
-
-        // send Payload if needed
-        if(payload && size > 0) {
-            if(_client->write(&payload[0], size) != size) {
-                return returnError(HTTPC_ERROR_SEND_PAYLOAD_FAILED);
-            }
-        }
-
-        code = handleHeaderResponse();
-        log_d("sendRequest code=%d\n", code);
-
-        // Handle redirections as stated in RFC document:
-        // https://www.w3.org/Protocols/rfc2616/rfc2616-sec10.html
-        //
-        // Implementing HTTP_CODE_FOUND as redirection with GET method,
-        // to follow most of existing user agent implementations.
-        //
-        redirect = false;
-        if (
-            _followRedirects != HTTPC_DISABLE_FOLLOW_REDIRECTS && 
-            redirectCount < _redirectLimit &&
-            _location.length() > 0
-        ) {
-            switch (code) {
-                // redirecting using the same method
-                case HTTP_CODE_MOVED_PERMANENTLY:
-                case HTTP_CODE_TEMPORARY_REDIRECT: {
-                    if (
-                        // allow to force redirections on other methods
-                        // (the RFC require user to accept the redirection)
-                        _followRedirects == HTTPC_FORCE_FOLLOW_REDIRECTS ||
-                        // allow GET and HEAD methods without force
-                        !strcmp(type, "GET") || 
-                        !strcmp(type, "HEAD")
-                    ) {
-                        redirectCount += 1;
-                        log_d("following redirect (the same method): '%s' redirCount: %d\n", _location.c_str(), redirectCount);
-                        if (!setURL(_location)) {
-                            log_d("failed setting URL for redirection\n");
-                            // no redirection
-                            break;
-                        }
-                        // redirect using the same request method and payload, diffrent URL
-                        redirect = true;
-                    }
-                    break;
-                }
-                // redirecting with method dropped to GET or HEAD
-                // note: it does not need `HTTPC_FORCE_FOLLOW_REDIRECTS` for any method
-                case HTTP_CODE_FOUND:
-                case HTTP_CODE_SEE_OTHER: {
-                    redirectCount += 1;
-                    log_d("following redirect (dropped to GET/HEAD): '%s' redirCount: %d\n", _location.c_str(), redirectCount);
-                    if (!setURL(_location)) {
-                        log_d("failed setting URL for redirection\n");
-                        // no redirection
-                        break;
-                    }
-                    // redirect after changing method to GET/HEAD and dropping payload
-                    type = "GET";
-                    payload = nullptr;
-                    size = 0;
-                    redirect = true;
-                    break;
-                }
-
-                default:
-                    break;
-            }
-        }
-
-    } while (redirect);
     // handle Server Response (Header)
-    return returnError(code);
+    return returnError(handleHeaderResponse());
 }
 
 /**
@@ -936,19 +842,18 @@ int HTTPClient::writeToStream(Stream * stream)
  */
 String HTTPClient::getString(void)
 {
-    // _size can be -1 when Server sends no Content-Length header
-    if(_size > 0 || _size == -1) {
-        StreamString sstring;
-        // try to reserve needed memory (noop if _size == -1)
-        if(sstring.reserve((_size + 1))) {
-            writeToStream(&sstring);
-            return sstring;            
-        } else {
+    StreamString sstring;
+
+    if(_size) {
+        // try to reserve needed memmory
+        if(!sstring.reserve((_size + 1))) {
             log_d("not enough memory to reserve a string! need: %d", (_size + 1));
+            return "";
         }
     }
 
-    return "";
+    writeToStream(&sstring);
+    return sstring;
 }
 
 /**
@@ -1005,7 +910,7 @@ void HTTPClient::addHeader(const String& name, const String& value, bool first, 
 
         if (replace) {
             int headerStart = _headers.indexOf(headerLine);
-            if (headerStart != -1 && (headerStart == 0 || _headers[headerStart - 1] == '\n')) {
+            if (headerStart != -1) {
                 int headerEnd = _headers.indexOf('\n', headerStart);
                 _headers = _headers.substring(0, headerStart) + _headers.substring(headerEnd + 1);
             }
@@ -1019,6 +924,7 @@ void HTTPClient::addHeader(const String& name, const String& value, bool first, 
             _headers += headerLine;
         }
     }
+
 }
 
 void HTTPClient::collectHeaders(const char* headerKeys[], const size_t headerKeysCount)
@@ -1107,13 +1013,7 @@ bool HTTPClient::connect(void)
         log_d("HTTPClient::begin was not called or returned error");
         return false;
     }
-#ifdef HTTPCLIENT_1_1_COMPATIBLE
-    if (_tcpDeprecated && !_transportTraits->verify(*_client, _host.c_str())) {
-        log_d("transport level verify failed");
-        _client->stop();
-        return false;
-    }	
-#endif
+
     if(!_client->connect(_host.c_str(), _port, _connectTimeout)) {
         log_d("failed connect to %s:%u", _host.c_str(), _port);
         return false;
@@ -1123,6 +1023,14 @@ bool HTTPClient::connect(void)
     _client->setTimeout((_tcpTimeout + 500) / 1000);	
 
     log_d(" connected to %s:%u", _host.c_str(), _port);
+
+#ifdef HTTPCLIENT_1_1_COMPATIBLE
+    if (_tcpDeprecated && !_transportTraits->verify(*_client, _host.c_str())) {
+        log_d("transport level verify failed");
+        _client->stop();
+        return false;
+    }	
+#endif
 
 
 /*
@@ -1203,7 +1111,6 @@ int HTTPClient::handleHeaderResponse()
 
     _transferEncoding = HTTPC_TE_IDENTITY;
     unsigned long lastDataTime = millis();
-    bool firstLine = true;
 
     while(connected()) {
         size_t len = _client->available();
@@ -1215,13 +1122,11 @@ int HTTPClient::handleHeaderResponse()
 
             log_v("RX: '%s'", headerLine.c_str());
 
-            if(firstLine) {
-		firstLine = false;
-                if(_canReuse && headerLine.startsWith("HTTP/1.")) {
+            if(headerLine.startsWith("HTTP/1.")) {
+                if(_canReuse) {
                     _canReuse = (headerLine[sizeof "HTTP/1." - 1] != '0');
                 }
-                int codePos = headerLine.indexOf(' ') + 1;
-                _returnCode = headerLine.substring(codePos, headerLine.indexOf(' ', codePos)).toInt();
+                _returnCode = headerLine.substring(9, headerLine.indexOf(' ', 9)).toInt();
             } else if(headerLine.indexOf(':')) {
                 String headerName = headerLine.substring(0, headerLine.indexOf(':'));
                 String headerValue = headerLine.substring(headerLine.indexOf(':') + 1);
@@ -1239,10 +1144,6 @@ int HTTPClient::handleHeaderResponse()
 
                 if(headerName.equalsIgnoreCase("Transfer-Encoding")) {
                     transferEncoding = headerValue;
-                }
-
-                if (headerName.equalsIgnoreCase("Location")) {
-                    _location = headerValue;
                 }
 
                 for(size_t i = 0; i < _headerKeysCount; i++) {
@@ -1264,8 +1165,6 @@ int HTTPClient::handleHeaderResponse()
                     log_d("Transfer-Encoding: %s", transferEncoding.c_str());
                     if(transferEncoding.equalsIgnoreCase("chunked")) {
                         _transferEncoding = HTTPC_TE_CHUNKED;
-                    } else if(transferEncoding.equalsIgnoreCase("identity")) {
-                        _transferEncoding = HTTPC_TE_IDENTITY;
                     } else {
                         return HTTPC_ERROR_ENCODING;
                     }
@@ -1333,9 +1232,9 @@ int HTTPClient::writeToStreamDataBlock(Stream * stream, int size)
                     readBytes = buff_size;
                 }
 		    
-        		// stop if no more reading    
-        		if (readBytes == 0)
-        			break;
+		// stop if no more reading    
+		if (readBytes == 0)
+			break;
 
                 // read data
                 int bytesRead = _client->readBytes(buff, readBytes);
@@ -1423,53 +1322,4 @@ int HTTPClient::returnError(int error)
         }
     }
     return error;
-}
-
-void HTTPClient::setFollowRedirects(followRedirects_t follow)
-{
-    _followRedirects = follow;
-}
-
-void HTTPClient::setRedirectLimit(uint16_t limit)
-{
-    _redirectLimit = limit;
-}
-
-/**
- * set the URL to a new value. Handy for following redirects.
- * @param url
- */
-bool HTTPClient::setURL(const String& url)
-{
-    // if the new location is only a path then only update the URI
-    if (url && url[0] == '/') {
-        _uri = url;
-        clear();
-        return true;
-    }
-
-    if (!url.startsWith(_protocol + ':')) {
-        log_d("new URL not the same protocol, expected '%s', URL: '%s'\n", _protocol.c_str(), url.c_str());
-        return false;
-    }
-
-    // check if the port is specified
-    int indexPort = url.indexOf(':', 6); // find the first ':' excluding the one from the protocol
-    int indexURI = url.indexOf('/', 7); // find where the URI starts to make sure the ':' is not part of it
-    if (indexPort == -1 || indexPort > indexURI) {
-        // the port is not specified
-        _port = (_protocol == "https" ? 443 : 80);
-    }
-
-    // disconnect but preserve _client. 
-    // Also have to keep the connection otherwise it will free some of the memory used by _client 
-    // and will blow up later when trying to do _client->available() or similar
-    _canReuse = true;
-    disconnect(true);
-    return beginInternal(url, _protocol.c_str());
-}
-
-const String &HTTPClient::getLocation(void)
-{
-    return _location;
 }

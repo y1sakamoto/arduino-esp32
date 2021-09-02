@@ -1,7 +1,7 @@
 {
   "name": "framework-arduinoespressif32",
-  "version": "0.0.0",
-  "description": "Arduino Wiring-based Framework for the Espressif ESP32, ESP32-S and ESP32-C series of SoCs",
+  "version": "3.10004.210126",
+  "description": "Arduino Wiring-based Framework for Espressif ESP32 microcontrollers",
   "keywords": [
     "framework",
     "arduino",

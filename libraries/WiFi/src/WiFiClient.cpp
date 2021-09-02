@@ -23,10 +23,9 @@
 #include <lwip/netdb.h>
 #include <errno.h>
 
-#define WIFI_CLIENT_DEF_CONN_TIMEOUT_MS  (3000)
-#define WIFI_CLIENT_MAX_WRITE_RETRY      (10)
-#define WIFI_CLIENT_SELECT_TIMEOUT_US    (1000000)
-#define WIFI_CLIENT_FLUSH_BUFFER_SIZE    (1024)
+#define WIFI_CLIENT_MAX_WRITE_RETRY   (10)
+#define WIFI_CLIENT_SELECT_TIMEOUT_US (1000000)
+#define WIFI_CLIENT_FLUSH_BUFFER_SIZE (1024)
 
 #undef connect
 #undef write
@@ -47,11 +46,7 @@ private:
                 return 0;
             }
             int count;
-#ifdef ESP_IDF_VERSION_MAJOR
-            int res = lwip_ioctl(_fd, FIONREAD, &count);
-#else
             int res = lwip_ioctl_r(_fd, FIONREAD, &count);
-#endif
             if(res < 0) {
                 _failed = true;
                 return 0;
@@ -110,7 +105,7 @@ public:
 
     int read(uint8_t * dst, size_t len){
         if(!dst || !len || (_pos == _fill && !fillBuffer())){
-            return _failed ? -1 : 0;
+            return -1;
         }
         size_t a = _fill - _pos;
         if(len <= a || ((len - a) <= (_size - _fill) && fillBuffer() >= (len - a))){
@@ -208,9 +203,9 @@ void WiFiClient::stop()
 
 int WiFiClient::connect(IPAddress ip, uint16_t port)
 {
-    return connect(ip,port,WIFI_CLIENT_DEF_CONN_TIMEOUT_MS);
-   }
-   int WiFiClient::connect(IPAddress ip, uint16_t port, int32_t timeout   )
+    return connect(ip,port,-1);
+}
+int WiFiClient::connect(IPAddress ip, uint16_t port, int32_t timeout)
 {
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) {
@@ -221,9 +216,9 @@ int WiFiClient::connect(IPAddress ip, uint16_t port)
 
     uint32_t ip_addr = ip;
     struct sockaddr_in serveraddr;
-    memset((char *) &serveraddr, 0, sizeof(serveraddr));
+    bzero((char *) &serveraddr, sizeof(serveraddr));
     serveraddr.sin_family = AF_INET;
-    memcpy((void *)&serveraddr.sin_addr.s_addr, (const void *)(&ip_addr), 4);
+    bcopy((const void *)(&ip_addr), (void *)&serveraddr.sin_addr.s_addr, 4);
     serveraddr.sin_port = htons(port);
     fd_set fdset;
     struct timeval tv;
@@ -232,11 +227,7 @@ int WiFiClient::connect(IPAddress ip, uint16_t port)
     tv.tv_sec = 0;
     tv.tv_usec = timeout * 1000;
 
-#ifdef ESP_IDF_VERSION_MAJOR
-    int res = lwip_connect(sockfd, (struct sockaddr*)&serveraddr, sizeof(serveraddr));
-#else
     int res = lwip_connect_r(sockfd, (struct sockaddr*)&serveraddr, sizeof(serveraddr));
-#endif
     if (res < 0 && errno != EINPROGRESS) {
         log_e("connect on fd %d, errno: %d, \"%s\"", sockfd, errno, strerror(errno));
         close(sockfd);
@@ -279,9 +270,9 @@ int WiFiClient::connect(IPAddress ip, uint16_t port)
 
 int WiFiClient::connect(const char *host, uint16_t port)
 {
-    return connect(host,port,WIFI_CLIENT_DEF_CONN_TIMEOUT_MS);
-   }
-   int WiFiClient::connect(const char *host, uint16_t port, int32_t timeout   )
+    return connect(host,port,-1);
+}
+int WiFiClient::connect(const char *host, uint16_t port, int32_t timeout)
 {
     IPAddress srv((uint32_t)0);
     if(!WiFiGenericClass::hostByName(host, srv)){
@@ -322,7 +313,7 @@ int WiFiClient::setOption(int option, int *value)
 
 int WiFiClient::getOption(int option, int *value)
 {
-	socklen_t size = sizeof(int);
+    size_t size = sizeof(int);
     int res = getsockopt(fd(), IPPROTO_TCP, option, (char *)value, &size);
     if(res < 0) {
         log_e("fail on fd %d, errno: %d, \"%s\"", fd(), errno, strerror(errno));
@@ -354,9 +345,6 @@ int WiFiClient::read()
     int res = read(&data, 1);
     if(res < 0) {
         return res;
-    }
-    if (res == 0) {  //  No data available.
-        return -1;
     }
     return data;
 }
@@ -443,25 +431,20 @@ size_t WiFiClient::write(Stream &stream)
 int WiFiClient::read(uint8_t *buf, size_t size)
 {
     int res = -1;
-    if (_rxBuffer) {
-        res = _rxBuffer->read(buf, size);
-        if(_rxBuffer->failed()) {
-            log_e("fail on fd %d, errno: %d, \"%s\"", fd(), errno, strerror(errno));
-            stop();
-        }
+    res = _rxBuffer->read(buf, size);
+    if(_rxBuffer->failed()) {
+        log_e("fail on fd %d, errno: %d, \"%s\"", fd(), errno, strerror(errno));
+        stop();
     }
     return res;
 }
 
 int WiFiClient::peek()
 {
-    int res = -1;
-    if (_rxBuffer) {
-        res = _rxBuffer->peek();
-        if(_rxBuffer->failed()) {
-            log_e("fail on fd %d, errno: %d, \"%s\"", fd(), errno, strerror(errno));
-            stop();
-        }
+    int res = _rxBuffer->peek();
+    if(_rxBuffer->failed()) {
+        log_e("fail on fd %d, errno: %d, \"%s\"", fd(), errno, strerror(errno));
+        stop();
     }
     return res;
 }
@@ -512,28 +495,23 @@ uint8_t WiFiClient::connected()
         int res = recv(fd(), &dummy, 0, MSG_DONTWAIT);
         // avoid unused var warning by gcc
         (void)res;
-        // recv only sets errno if res is <= 0
-        if (res <= 0){
-          switch (errno) {
-              case EWOULDBLOCK:
-              case ENOENT: //caused by vfs
-                  _connected = true;
-                  break;
-              case ENOTCONN:
-              case EPIPE:
-              case ECONNRESET:
-              case ECONNREFUSED:
-              case ECONNABORTED:
-                  _connected = false;
-                  log_d("Disconnected: RES: %d, ERR: %d", res, errno);
-                  break;
-              default:
-                  log_i("Unexpected: RES: %d, ERR: %d", res, errno);
-                  _connected = true;
-                  break;
-          }
-        } else {
-          _connected = true;
+        switch (errno) {
+            case EWOULDBLOCK:
+            case ENOENT: //caused by vfs
+                _connected = true;
+                break;
+            case ENOTCONN:
+            case EPIPE:
+            case ECONNRESET:
+            case ECONNREFUSED:
+            case ECONNABORTED:
+                _connected = false;
+                log_d("Disconnected: RES: %d, ERR: %d", res, errno);
+                break;
+            default:
+                log_i("Unexpected: RES: %d, ERR: %d", res, errno);
+                _connected = true;
+                break;
         }
     }
     return _connected;

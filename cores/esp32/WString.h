@@ -55,10 +55,6 @@ class String {
         // fails, the string will be marked as invalid (i.e. "if (s)" will
         // be false).
         String(const char *cstr = "");
-        String(const char *cstr, unsigned int length);
-#ifdef __GXX_EXPERIMENTAL_CXX0X__
-        String(const uint8_t *cstr, unsigned int length) : String((const char*)cstr, length) {}
-#endif
         String(const String &str);
         String(const __FlashStringHelper *str);
 #ifdef __GXX_EXPERIMENTAL_CXX0X__
@@ -112,8 +108,6 @@ class String {
         // concatenation is considered unsuccessful.
         unsigned char concat(const String &str);
         unsigned char concat(const char *cstr);
-        unsigned char concat(const char *cstr, unsigned int length);
-        unsigned char concat(const uint8_t *cstr, unsigned int length) {return concat((const char*)cstr, length);}
         unsigned char concat(char c);
         unsigned char concat(unsigned char c);
         unsigned char concat(int num);
@@ -209,20 +203,8 @@ class String {
         unsigned char equalsIgnoreCase(const String &s) const;
         unsigned char equalsConstantTime(const String &s) const;
         unsigned char startsWith(const String &prefix) const;
-        unsigned char startsWith(const char *prefix) const {
-            return this->startsWith(String(prefix));
-        }
-        unsigned char startsWith(const __FlashStringHelper *prefix) const {
-            return this->startsWith(String(prefix));
-        }
         unsigned char startsWith(const String &prefix, unsigned int offset) const;
         unsigned char endsWith(const String &suffix) const;
-        unsigned char endsWith(const char *suffix) const {
-            return this->endsWith(String(suffix));
-        }
-        unsigned char endsWith(const __FlashStringHelper * suffix) const {
-            return this->endsWith(String(suffix));
-        }
 
         // character access
         char charAt(unsigned int index) const;
@@ -256,22 +238,7 @@ class String {
 
         // modification
         void replace(char find, char replace);
-        void replace(const String &find, const String &replace);
-        void replace(const char *find, const String &replace) {
-            this->replace(String(find), replace);
-        }
-        void replace(const __FlashStringHelper *find, const String &replace) {
-            this->replace(String(find), replace);
-        }
-        void replace(const char *find, const char *replace) {
-            this->replace(String(find), String(replace));
-        }
-        void replace(const __FlashStringHelper *find, const char *replace) {
-            this->replace(String(find), String(replace));
-        }
-        void replace(const __FlashStringHelper *find, const __FlashStringHelper *replace) {
-            this->replace(String(find), String(replace));
-        }
+        void replace(const String& find, const String& replace);
         void remove(unsigned int index);
         void remove(unsigned int index, unsigned int count);
         void toLowerCase(void);
@@ -287,8 +254,8 @@ class String {
         // Contains the string info when we're not in SSO mode
         struct _ptr { 
             char *   buff;
-            uint32_t cap;
-            uint32_t len;
+            uint16_t cap;
+            uint16_t len;
         };
         // This allows strings up up to 11 (10 + \0 termination) without any extra space.
         enum { SSOSIZE = sizeof(struct _ptr) + 4 - 1 }; // Characters to allocate space for SSO, must be 12 or more
@@ -297,11 +264,7 @@ class String {
             unsigned char len   : 7; // Ensure only one byte is allocated by GCC for the bitfields
             unsigned char isSSO : 1;
         } __attribute__((packed)); // Ensure that GCC doesn't expand the flag byte to a 32-bit word for alignment issues
-#ifdef BOARD_HAS_PSRAM
-        enum { CAPACITY_MAX = 3145728 }; 
-#else
-        enum { CAPACITY_MAX = 65535 }; 
-#endif
+        enum { CAPACITY_MAX = 65535 }; // If typeof(cap) changed from uint16_t, be sure to update this enum to the max value storable in the type
         union {
             struct _ptr ptr;
             struct _sso sso;
@@ -311,19 +274,9 @@ class String {
         inline unsigned int len() const { return isSSO() ? sso.len : ptr.len; }
         inline unsigned int capacity() const { return isSSO() ? (unsigned int)SSOSIZE - 1 : ptr.cap; } // Size of max string not including terminal NUL
         inline void setSSO(bool set) { sso.isSSO = set; }
-        inline void setLen(int len) {
-            if (isSSO()) {
-                sso.len = len;
-                sso.buff[len] = 0;
-            } else {
-                ptr.len = len;
-                if (ptr.buff) {
-                    ptr.buff[len] = 0;
-                }
-            }
-        }
+        inline void setLen(int len) { if (isSSO()) sso.len = len; else ptr.len = len; }
         inline void setCapacity(int cap) { if (!isSSO()) ptr.cap = cap; }
-        inline void setBuffer(char *buff) { if (!isSSO()) ptr.buff = buff; }
+	inline void setBuffer(char *buff) { if (!isSSO()) ptr.buff = buff; }
         // Buffer accessor functions
         inline const char *buffer() const { return (const char *)(isSSO() ? sso.buff : ptr.buff); }
         inline char *wbuffer() const { return isSSO() ? const_cast<char *>(sso.buff) : ptr.buff; } // Writable version of buffer
@@ -332,6 +285,7 @@ class String {
         void init(void);
         void invalidate(void);
         unsigned char changeBuffer(unsigned int maxStrLen);
+        unsigned char concat(const char *cstr, unsigned int length);
 
         // copy and move
         String & copy(const char *cstr, unsigned int length);

@@ -29,7 +29,6 @@
 #include <string.h>
 #include <inttypes.h>
 
-#include "esp_arduino_version.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -79,7 +78,7 @@
 #define interrupts() sei()
 #define noInterrupts() cli()
 
-#define clockCyclesPerMicrosecond() ( (long int)getCpuFrequencyMhz() )
+#define clockCyclesPerMicrosecond() ( F_CPU / 1000000L )
 #define clockCyclesToMicroseconds(a) ( (a) / clockCyclesPerMicrosecond() )
 #define microsecondsToClockCycles(a) ( (a) * clockCyclesPerMicrosecond() )
 
@@ -89,7 +88,7 @@
 #define bitRead(value, bit) (((value) >> (bit)) & 0x01)
 #define bitSet(value, bit) ((value) |= (1UL << (bit)))
 #define bitClear(value, bit) ((value) &= ~(1UL << (bit)))
-#define bitWrite(value, bit, bitvalue) ((bitvalue) ? bitSet(value, bit) : bitClear(value, bit))
+#define bitWrite(value, bit, bitvalue) (bitvalue ? bitSet(value, bit) : bitClear(value, bit))
 
 // avr-libc defines _NOP() since 1.6.2
 #ifndef _NOP
@@ -99,23 +98,13 @@
 #define bit(b) (1UL << (b))
 #define _BV(b) (1UL << (b))
 
-#define digitalPinToTimer(pin)      (0)
-#define analogInPinToBit(P)         (P)
-#if SOC_GPIO_PIN_COUNT <= 32
-#define digitalPinToPort(pin)       (0)
-#define digitalPinToBitMask(pin)    (1UL << (pin))
-#define portOutputRegister(port)    ((volatile uint32_t*)GPIO_OUT_REG)
-#define portInputRegister(port)     ((volatile uint32_t*)GPIO_IN_REG)
-#define portModeRegister(port)      ((volatile uint32_t*)GPIO_ENABLE_REG)
-#elif SOC_GPIO_PIN_COUNT <= 64
 #define digitalPinToPort(pin)       (((pin)>31)?1:0)
 #define digitalPinToBitMask(pin)    (1UL << (((pin)>31)?((pin)-32):(pin)))
+#define digitalPinToTimer(pin)      (0)
+#define analogInPinToBit(P)         (P)
 #define portOutputRegister(port)    ((volatile uint32_t*)((port)?GPIO_OUT1_REG:GPIO_OUT_REG))
 #define portInputRegister(port)     ((volatile uint32_t*)((port)?GPIO_IN1_REG:GPIO_IN_REG))
 #define portModeRegister(port)      ((volatile uint32_t*)((port)?GPIO_ENABLE1_REG:GPIO_ENABLE_REG))
-#else
-#error SOC_GPIO_PIN_COUNT > 64 not implemented
-#endif
 
 #define NOT_A_PIN -1
 #define NOT_A_PORT -1
@@ -126,12 +115,10 @@ typedef bool boolean;
 typedef uint8_t byte;
 typedef unsigned int word;
 
-#ifdef __cplusplus
 void setup(void);
 void loop(void);
 
 long random(long, long);
-#endif
 void randomSeed(unsigned long);
 long map(long, long, long, long, long);
 
@@ -175,7 +162,7 @@ using std::min;
 using ::round;
 
 uint16_t makeWord(uint16_t w);
-uint16_t makeWord(uint8_t h, uint8_t l);
+uint16_t makeWord(byte h, byte l);
 
 #define word(...) makeWord(__VA_ARGS__)
 
